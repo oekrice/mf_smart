@@ -30,7 +30,7 @@ from init import compute_initial_condition
 from write_electric import compute_electrics
 from scipy.io import netcdf_file
 
-from helicity_tools import compute_helicity
+from helicity_tools import compute_helicity, compare_fields
 
 if len(sys.argv) > 1:
     run = int(sys.argv[1])
@@ -63,9 +63,9 @@ eta0 = 0.0
 tmax = 750.0
 tstart = 0.0
 
-nx = 128
-ny = 128
-nz = 128
+nx = 64
+ny = 64
+nz = 64
 
 ndiags = 750
 nmags = max(500, 500*tmax/250.0) #Number of magnetograms used.
@@ -254,7 +254,50 @@ halls = []; omegas = []; tplots = []
 if hflag < 0.5:
     os.system('make')
 
-nmags_per_run = 1
+def find_minimum(xs, ys):
+    #Fits a quadratic function to these three data points and finds the find_minimum
+    #Hopefully should be second-order convergence, but we'll see
+
+    print('Finding minimum', xs, ys)
+    a = 0
+    b = 0
+    for i in range(3):
+        #Do 'a' first
+        den = 1
+        for j in range(3):
+            if j != i:
+                den *= (xs[i] - xs[j])
+        a += ys[i]/den
+
+        #Then 'b'
+        num = 0
+        for j in range(3):
+            if j != i:
+                num -= xs[j]
+        b += ys[i]*num/den
+
+    c = ys[0] - a*xs[0]**2 - b*xs[0]
+    x = np.linspace(0,np.max(xs)*1.1,100)
+    y = a*x**2 + b*x + c
+
+    plt.plot(x, y)
+    plt.scatter(xs, ys)
+
+    print('a', a, 'b', b)
+
+    minx = -b/(2*a)
+    plt.scatter(minx, a*minx**2 + b*minx + c)
+    plt.close()
+
+    if a > 0:
+        return minx
+
+    else:
+        return 1e6
+
+nmags_per_run = 5
+
+find_intercept = False
 
 for mag_start in range(start, 500, nmags_per_run):
 
@@ -271,7 +314,11 @@ for mag_start in range(start, 500, nmags_per_run):
             go = False
 
         maxomega = 1.0
-        minomega = 1e-5
+        minomega = 1e-4
+
+        omega = max(minomega, omega)
+        omega = min(maxomega, omega)
+
         print('Running step', mag_start, 'omega = ', omega)
 
         compute_electrics(run, init_number, omega = omega, start = mag_start, end = mag_end)
@@ -288,50 +335,97 @@ for mag_start in range(start, 500, nmags_per_run):
             os.system('/usr/lib64/openmpi/bin/mpiexec -np %d --oversubscribe ./bin/mf3d %d' % (nprocs, run))
 
         #Check helicity against reference
-        helicity_check = compute_helicity(run, mag_end)
-        helicity_target = hrefs[mag_end]
 
-        xs.append(omega); ys.append(helicity_check - helicity_target)
+        #Want to add the option to use other measures here, so probably shouldn't call it helicity
 
-        if abs(helicity_check - helicity_target) < 1e0:   #Close enough
-            go = False
-            print('GOOD ENOUGH',  omega, helicity_check-helicity_target, xs, ys)
+        if False:
+            check = compute_helicity(run, mag_end)
+            target = hrefs[mag_end]
 
-        else:   #not close enough, make a better estimate
-            print('NOT GOOD ENOUGH', omega, helicity_check-helicity_target, xs, ys)
-            if len(xs) == 1:
-                if helicity_check > helicity_target and omega > minomega:
-                    omega = omega/1.1
-                elif helicity_check < helicity_target and omega < maxomega:
-                    omega = omega*1.1
+        else:
+            check = compare_fields(run, mag_end)
+            target = 0
+
+        xs.append(omega); ys.append(check - target)
+
+        #THIS ASSUMES A ZERO INTERCEPT RATHER THAN MINIMISING ANYTHING
+
+        if find_intercept:
+            if abs(check - target) < 1e0:   #Close enough
+                go = False
+                print('GOOD ENOUGH',  omega, check-target, xs, ys)
+
+            else:   #not close enough, make a better estimate
+                print('NOT GOOD ENOUGH', omega, check-target, xs, ys)
+                if len(xs) == 1:
+                    if check > target and omega > minomega:
+                        omega = omega/1.1
+                    elif check < target and omega < maxomega:
+                        omega = omega*1.1
+                    else:
+                        go = False
                 else:
-                    go = False
-            else:
-                #Check for anomalies...
-                if (ys[-1] - ys[-2]) / (xs[-1] - xs[-2]) < 0:
-                    go = False
-
-                else:
-                    target = xs[-1] - ys[-1]*((xs[-1] - xs[-2])/(ys[-1] - ys[-2]))
-                    if target > maxomega:
-                        omega = maxomega
-                        stopnext = True
-                        print('OMEGA BIG', target)
-                    elif target < minomega:
-                        omega = minomega
-                        stopnext = True
-                        print('OMEGA SMALL', target)
+                    #Check for anomalies...
+                    if (ys[-1] - ys[-2]) / (xs[-1] - xs[-2]) < 0:
+                        go = False
 
                     else:
-                        print('TARGET',target)
-                        omega = target
+                        nr_target = xs[-1] - ys[-1]*((xs[-1] - xs[-2])/(ys[-1] - ys[-2]))
+                        if nr_target > maxomega:
+                            omega = maxomega
+                            stopnext = True
+                            print('OMEGA BIG', nr_target)
+                        elif nr_target < minomega:
+                            omega = minomega
+                            stopnext = True
+                            print('OMEGA SMALL', nr_target)
+
+                        else:
+                            print('TARGET',nr_target)
+                            omega = nr_target
+        else:   #Find the minimum. This is a bit more intense and will always take a little while
+            fact = 1.1
+            #Estalishing when minimum is found is tricky.
+            if len(xs) == 1:  #Only one point -- make a guess
+                print('Increasing Omega')
+                omega = omega*fact
+            elif len(xs) == 2:  #Two points -- make a slightly more informed guess
+                if ys[-1] > ys[-2]:
+                    print('Further from minimum, trying the other way')
+                    omega = omega/(fact**2)
+                else:
+                    print('Correct drection, extending')
+
+                    omega = omega*fact
+
+            elif len(xs) > 2:  #Three points -- can make a pretty good guess!
+                print('Interpolating...')
+
+                min_target = find_minimum(xs[-3:], ys[-3:])
+
+                if min_target > 1e5:
+                    print('Mininum not nearby, increasing')
+                    omega = omega*fact
+                elif min_target < 0:
+                    print('Mininum too low, guessing')
+                    omega = omega/fact
+                else:
+                    print('Minimum found, using that')
+                    omega = min_target
+
+                print(xs, ys, min_target, omega)
+
+                dydx = abs(ys[-1] - ys[-2])/abs(xs[-1] - xs[-2])
+                print('dydx', dydx)
+                if dydx < 1e-5:
+                    go = False
 
 
-    halls.append(helicity_check)
+    halls.append(check)
     omegas.append(omega)
     tplots.append(mag_end*0.5)
 
-    print(mag_end, ts[mag_start + 1], hrefs[mag_start + 1], helicity_check)
+    print(mag_end, ts[mag_start + 1], hrefs[mag_start + 1], check)
 
     np.save('./hdata/halls.npy', halls)
     np.save('./hdata/omegas.npy', omegas)
@@ -340,7 +434,7 @@ for mag_start in range(start, 500, nmags_per_run):
 #Finish off by running the remaining
 
 mag_start = 499
-mag_end = int(tmax*2)
+mag_end = min(mag_start, int(tmax*2))
 
 compute_electrics(run, init_number, omega = omega, start = mag_start, end = mag_end)
 
