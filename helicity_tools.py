@@ -284,6 +284,15 @@ def compare_fields(run, mag_number):
 
     return diff1 + diff2
 
+def plot_omegas():
+    omegas = np.load('./hdata/omegas.npy')
+    tplots = np.load('./hdata/tplots.npy')
+    plt.plot(tplots,omegas)
+    plt.yscale('log')
+    plt.show()
+
+#plot_omegas()
+
 
 
 

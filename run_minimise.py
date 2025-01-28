@@ -54,7 +54,6 @@ except:
     hflag = 0
     winflag = 1
 
-start = 0
 #DYNAMIC SYSTEM PARAMETERS
 #-------------------------------------
 voutfact = 5.0
@@ -64,9 +63,11 @@ eta0 = 0.0
 tmax = 750.0
 tstart = 0.0
 
-nx = 128
-ny = 128
-nz = 128
+start = 60
+
+nx = 64
+ny = 64
+nz = 64
 
 ndiags = 750
 nmags = max(500, 500*tmax/250.0) #Number of magnetograms used.
@@ -296,134 +297,71 @@ def find_minimum(xs, ys):
     else:
         return 1e6
 
-nmags_per_run = 25
+nmags_per_run = 5
 
 find_intercept = False
 
+test_range_init = 10   #This should be changed.
+
+test_range = test_range_init
+
+fig_num = 0
+
+omega_init = 1e-2
+
 for mag_start in range(start, 500, nmags_per_run):
 
-    omega_init = omega
     mag_end = mag_start + nmags_per_run
+
+    go  = True
+
+    stopnext = False
+
+    ntests = 5
+    stepcount = 0
+
+
+    min_omega = 1e-4
+    max_omega = 1.0
 
     xs = []; ys = []  #For the function interpolation
 
-    go  = True
-    stopnext = False
-    while go:
+    while go:   #Run the entire step
+
+
+
+
+        #Omega_init provides some kind of information.
+        #Use a geomspace distribution that is narrowed down iteratively until a minimum is found
+        #Call this 'test_range'. Use one slightly smaller than the MAXIMUM from the previous.
+
+        test_omegas = np.geomspace(omega_init/test_range, omega_init*test_range, ntests)
+
         #Find the ideal omega
 
-        if stopnext:
-            go = False
+        for test_omega in test_omegas:
+            print('Running step', mag_start, 'omega = ', test_omega)
 
-        maxomega = 1.0
-        minomega = 1e-4
+            compute_electrics(run, init_number, omega = test_omega, start = mag_start, end = mag_end)
 
-        omega = max(minomega, omega)
-        omega = min(maxomega, omega)
+            variables[29] = mag_start
+            variables[30] = mag_end
 
-        print('Running step', mag_start, 'omega = ', omega)
+            np.savetxt('parameters/variables%03d.txt' % run, variables)   #variables numbered based on run number (up to 1000)
 
-        compute_electrics(run, init_number, omega = omega, start = mag_start, end = mag_end)
+            #print('Using output directory "%s"' % (data_directory))
+            if nprocs <= 4:
+                os.system('/usr/lib64/openmpi/bin/mpiexec ffpe-summary=none -np %d ./bin/mf3d %d' % (nprocs, run))
+            else:
+                os.system('/usr/lib64/openmpi/bin/mpiexec -np %d --oversubscribe ./bin/mf3d %d' % (nprocs, run))
 
-        variables[29] = mag_start
-        variables[30] = mag_end
+            #Check helicity against reference
 
-        np.savetxt('parameters/variables%03d.txt' % run, variables)   #variables numbered based on run number (up to 1000)
+            #Want to add the option to use other measures here, so probably shouldn't call it helicity
 
-        #print('Using output directory "%s"' % (data_directory))
-        if nprocs <= 4:
-            os.system('/usr/lib64/openmpi/bin/mpiexec ffpe-summary=none -np %d ./bin/mf3d %d' % (nprocs, run))
-        else:
-            os.system('/usr/lib64/openmpi/bin/mpiexec -np %d --oversubscribe ./bin/mf3d %d' % (nprocs, run))
-
-        #Check helicity against reference
-
-        #Want to add the option to use other measures here, so probably shouldn't call it helicity
-
-        if False:
-            check = compute_helicity(run, mag_end)
-            target = hrefs[mag_end]
-
-        else:
             check = compare_fields(run, mag_end)
             target = 0
 
-
-        #THIS ASSUMES A ZERO INTERCEPT RATHER THAN MINIMISING ANYTHING
-
-        if find_intercept:
-            xs.append(omega); ys.append(check - target)
-
-            if abs(check - target) < 1e0:   #Close enough
-                go = False
-                print('GOOD ENOUGH',  omega, check-target, xs, ys)
-
-            else:   #not close enough, make a better estimate
-                print('NOT GOOD ENOUGH', omega, check-target, xs, ys)
-                if len(xs) == 1:
-                    if check > target and omega > minomega:
-                        omega = omega/1.1
-                    elif check < target and omega < maxomega:
-                        omega = omega*1.1
-                    else:
-                        go = False
-                else:
-                    #Check for anomalies...
-                    if (ys[-1] - ys[-2]) / (xs[-1] - xs[-2]) < 0:
-                        go = False
-
-                    else:
-                        nr_target = xs[-1] - ys[-1]*((xs[-1] - xs[-2])/(ys[-1] - ys[-2]))
-                        if nr_target > maxomega:
-                            omega = maxomega
-                            stopnext = True
-                            print('OMEGA BIG', nr_target)
-                        elif nr_target < minomega:
-                            omega = minomega
-                            stopnext = True
-                            print('OMEGA SMALL', nr_target)
-
-                        else:
-                            print('TARGET',nr_target)
-                            omega = nr_target
-        elif False:   #Find the minimum. This is a bit more intense and will always take a little while
-            fact = 1.1
-            #Estalishing when minimum is found is tricky.
-            if len(xs) == 1:  #Only one point -- make a guess
-                print('Increasing Omega')
-                omega = omega*fact
-            elif len(xs) == 2:  #Two points -- make a slightly more informed guess
-                if ys[-1] > ys[-2]:
-                    print('Further from minimum, trying the other way')
-                    omega = omega/(fact**2)
-                else:
-                    print('Correct drection, extending')
-
-                    omega = omega*fact
-
-            elif len(xs) > 2:  #Three points -- can make a pretty good guess!
-                print('Interpolating...')
-
-                min_target = find_minimum(xs[-3:], ys[-3:])
-
-                if min_target > 1e5:
-                    print('Mininum not nearby, increasing')
-                    omega = omega*fact
-                elif min_target < 0:
-                    print('Mininum too low, guessing')
-                    omega = omega/fact
-                else:
-                    print('Minimum found, using that')
-                    omega = min_target
-
-                print(xs, ys, min_target, omega)
-
-                dydx = abs(ys[-1] - ys[-2])/abs(xs[-1] - xs[-2])
-                print('dydx', dydx)
-                if dydx < 1e-5:
-                    go = False
-
-        else:
             #Use some 'random' samples and narrow in on it from there.
             #Let's be reasonably smart.
 
@@ -433,73 +371,119 @@ for mag_start in range(start, 500, nmags_per_run):
             #Perhaps. Hard though.
             #Could fit a poly to it and find the minimum of that? Would be smooth at least
 
-            xs.append(omega); ys.append(check - target)
-
-            fact = 5.0   #Max up and down to be tested on the polynomial
-            nsamples = 5
+            xs.append(test_omega); ys.append(check - target)
 
 
-            allsamples = np.geomspace(omega_init/fact, omega_init*fact, nsamples)
+        def func(x, a, b, c): #Parameters to be checked
+            lx = x#np.log(x)   #I think this is probably more reasonable
+            return a + b*lx + c*lx**2
 
-            print(allsamples, omega_init)
+        print('Points', stepcount, test_range, test_omegas, xs, ys)
 
-            if len(xs) < nsamples + 1:
-                omega = allsamples[len(xs) - 1]
+        #Check this is valid
 
-            print('POINTS CHECKED', xs[1:], ys[1:], omega, len(xs),len(xs)*((-1)**len(xs)) )
+        #1. If there is very little variation, keep the centre the same but increase the test range
+        if np.abs(np.max(ys) - np.min(ys)) < 1e-3:
+            test_range = 1 + (test_range-1)*2
+            omega_init = omega_init
+            stepcount += 3
+            print('Option 1')
+        #2. If the minimum value is at the end of the range, reduce omega to this point and broaden test range a bit
+        elif ys.index(np.min(ys)) == 0:
+            test_range = 1 + (test_range-1)*2
+            omega_init = xs[0]
+            stepcount += 1
+            print('Option 2')
 
-            def func(x, a, b, c): #Parameters to be checked
-                lx = x#np.log(x)   #I think this is probably more reasonable
-                return a + b*lx + c*lx**2
+        elif ys.index(np.min(ys)) == len(ys) - 1:
+            test_range = 1 + (test_range-1)*2
+            omega_init = xs[-1]
+            stepcount += 1
+            print('Option 3')
 
-            if len(xs) > nsamples + 1:
+        #3. If the minimum value is in the middle of the range, pick this as the new init and reduce range
+        elif ys.index(np.min(ys)) > 0 and ys.index(np.min(ys)) < len(ys) - 1:
+            test_range = 1 + (test_range-1)/2
 
-                #Check for minimum of curve
-                popt, pcov = curve_fit(func, xs[1:], ys[1:])
+            if len(xs) > 20: #If lots of points, can disregard some of the originals
+                cut = 20
+            else:
+                cut = len(xs)
 
-                xs_all = np.linspace(allsamples[0], allsamples[-1], 100)
-                ys_all = func(xs_all, *popt)
-                plt.scatter(xs[1:], ys[1:])
-                plt.plot(xs_all, ys_all)
-                plt.show()
-                #See if there is a clear minimum. Somehow. There won't be to start with, unfortunately, so that's hard to test.
-                stopnext = True
-                omega = xs[ys.index(min(ys))]
+            #Check for minimum of curve
+            popt, pcov = curve_fit(func, xs[-cut:], ys[-cut:])
 
-                #Check if minimum is within the range. If not, change omega init and repeat
-                min_ind = np.where(ys_all == np.min(ys_all))[0][0]
-                x_min = xs_all[min_ind]
-                if x_min > allsamples[0] + 1e-6 and x_min < allsamples[-1] - 1e-6:
-                    go = False
-                    omega_init = x_min
-                    omega = x_min
-                elif x_min <= allsamples[0] + 1e-6:
-                    print('Range too high, reducing to', allsamples[0])
-                    omega_init = allsamples[0]
-                    omega = allsamples[0]
-                    xs = []; ys = []
-                elif x_min >= allsamples[-1] - 1e-6:
-                    print('Range too low, increasing to', allsamples[-1])
+            xs_all = np.linspace(min(xs[-cut:]), max(xs[-cut:]), 100)
+            ys_all = func(xs_all, *popt)
+            plt.scatter(xs[:], ys[:])
+            plt.scatter(xs[-cut:], ys[-cut:], c = 'red')
 
-                    omega_init = allsamples[-1]
-                    omega = allsamples[-1]
+            plt.plot(xs_all, ys_all)
+            plt.title(mag_start)
+            #plt.xscale('log')
+            plt.savefig('testfigs/fig%d.png' % fig_num)
+            plt.close()
+            fig_num += 1
 
-                    xs = []; ys = []
-                if omega_init < minomega:
-                    omega = minomega
-                    go = False
-                if omega_init > maxomega:
-                    omega = maxomega
-                    go = False
+            min_index = np.where(ys_all == np.min(ys_all))[0][0]
+            omega_init = xs_all[min_index]
+
+            print('Option 4')
+            print('Minimum at', min_index, xs_all[min_index])
+
+        #4. None of these things - I'm not sure what would go wrong. Test.
+        else:
+            print('Option 5')
+
+            print('Not sure what to do. Check')
+            print(xs, ys)
+            input()
 
 
-                print('Omega init', omega_init)
+        #Check for breaks
 
-    halls.append(check)
-    omegas.append(omega)
+        #Has narrowed it down nicely -- this will do
+        if (test_range - 1) < 1e-1:
+            print('Solution found')
+            omega_init = xs[ys.index(np.min(ys))]
+            test_range = 1 + (test_range-1)*2
+            go = False
+
+        if stepcount >= 5:
+            print('Solution not found, moving on')
+            #This isn't getting anywhere... Abandon and move on
+            if len(xs) > 10:
+                omega_init = xs[ys.index(np.min(ys))]
+            else:
+                omega_init = 1e-2
+            test_range = test_range_init
+            go = False
+
+        #Out of bounds
+        if omega_init < min_omega:
+            print('Solution below minimum')
+
+            omega_init = min_omega*test_range_init
+            test_range = test_range_init
+            go = False
+
+        if omega_init > max_omega:
+            print('Solution above maximum')
+
+            omega_init = max_omega/test_range_init
+            test_range = test_range_init
+            go = False
+
+
+        #See if there is a clear minimum. Somehow. There won't be to start with, unfortunately, so that's hard to test.
+
+        hel = compute_helicity(run, mag_end)
+
+
+
+    halls.append(hel)
+    omegas.append(omega_init)
     tplots.append(mag_end*0.5)
-
-    print(mag_end, ts[mag_start + 1], hrefs[mag_start + 1], check)
 
     np.save('./hdata/halls.npy', halls)
     np.save('./hdata/omegas.npy', omegas)

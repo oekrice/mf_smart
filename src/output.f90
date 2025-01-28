@@ -377,7 +377,7 @@ SUBROUTINE save_snap(snap_num)
 
 
     call mpi_barrier(comm, ierr)
-    if (proc_num == 0) print*, 'Saved snapshot number', snap_num, ' at time', t, 'to file ', output_filename
+    if (proc_num == -1) print*, 'Saved snapshot number', snap_num, ' at time', t, 'to file ', output_filename
 
     return
 
@@ -448,7 +448,7 @@ SUBROUTINE export_magnetogram(mag_num)
 
 
     call mpi_barrier(comm, ierr)
-    if (proc_num == 0) print*, 'Saved magnetogram number', mag_num, ' at time', t, 'to file ', mag_filename
+    if (proc_num == -1) print*, 'Saved magnetogram number', mag_num, ' at time', t, 'to file ', mag_filename
 
     return
 

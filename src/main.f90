@@ -38,7 +38,7 @@ PROGRAM main
 
     !CALL update_surface_flows(0)
 
-    if (proc_num == 0) print*, 'Set up, running from', mag_min, 'to', mag_max
+    if (proc_num == -1) print*, 'Set up, running from', mag_min, 'to', mag_max
     t = tstart
     !Adjust so this aligns with a magnetogram.
     !CALL save_snap(0)
@@ -60,7 +60,6 @@ PROGRAM main
     nt = (int(tmags/dt) + 1)
     dt = tmags/nt
 
-
     !print*, tmags/dt, int(tmags/dt) + 1
     !print*, '2', nt, dt, tmags/dt, tmax/dt
 
@@ -77,6 +76,7 @@ PROGRAM main
     CALL import_surface_electric(mag_min, 1.0_num/tmags)
 
     t = nstart*dt
+
     do n = nstart, nend-1  ! Actually run the code
 
         if (MOD(n, nt) == 0) then   !Is a multiple -- import new magnetogram
@@ -95,16 +95,22 @@ PROGRAM main
             !print*, 'Max all currents', maxval(abs(jx(0:nx+1, 0:ny,0:nz))), maxval(abs(jy(0:nx, 0:ny+1,0:nz))), maxval(abs(jz(0:nx, 0:ny,0:nz+1)))
         !end if
 
-        if (MOD(n, nt) == nt - 1) then   !Is a multiple -- do the export
-            CALL export_magnetogram(int((n+1)/nt))
-            CALL save_snap(int((n+1)/nt))
-
-        end if
         ax = ax - dt*ex
         ay = ay - dt*ey
         az = az - dt*ez
 
         t = t + dt
+
+        if (MOD(n, nt) == nt - 1) then   !Is a multiple -- do the export
+
+            !Need an extra 'timestep' here to get the magnetic field right for this A field
+
+            CALL timestep()
+            CALL export_magnetogram(int((n+1)/nt))
+            CALL save_snap(int((n+1)/nt))
+
+            if (proc_num == 0) print*, 'Snap saved', int((n+1)/nt), t
+        end if
 
     end do
 
@@ -114,7 +120,7 @@ PROGRAM main
         sum(abs(jy(2:nx-2,2:ny-2,2:nz-1))), sum(abs(jz(2:nx-2,2:ny-2,2:nz-1)))
     end if
     !CALL diagnostics(int(n/(nt/(ndiags-1))))
-    if (proc_num == 0) print*, 'Step', n, 'at time', t
+    if (proc_num == -1) print*, 'Step', n, 'at time', t
 
     !CALL diagnostics(ndiags-1)
     end if

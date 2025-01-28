@@ -54,7 +54,7 @@ class Grid():
 class compute_inplane_helicity():
     #Uses all three components of the magnetic field to give values for A.B at EACH of the input timesteps.
     #Requires the script from Chris' flt code
-    def __init__(self, run_min, run_max):
+    def __init__(self, run_min, run_max, snap = 0):
 
         grid = Grid(0)
         h_ref = []
@@ -64,7 +64,7 @@ class compute_inplane_helicity():
         runs = [-1] + np.arange(run_min, run_max).tolist()
         omegas = []
 
-        for snap in range(0,500,1):
+        for snap in range(snap, snap+1,1):
 
             for ri, run in enumerate(runs):
 
@@ -224,7 +224,7 @@ class compute_inplane_helicity():
             plt.suptitle('t = %d' % (snap*0.5))
             plt.tight_layout()
             plt.savefig('./hplots/%04d.png' % snap)
-            #plt.show()
+            plt.show()
             plt.close()
 
         #np.save('./hdata/h_ref.npy', h_ref)
@@ -256,7 +256,11 @@ if len(sys.argv) > 2:
 else:
     run_max = 1
 
+if len(sys.argv) > 3:
+    snap = int(sys.argv[3])
+else:
+    snap = 0
 
-compute_inplane_helicity(0,1)
+compute_inplane_helicity(0,1, snap = snap)
 
 
