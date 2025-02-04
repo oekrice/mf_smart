@@ -54,7 +54,7 @@ except:
     hflag = 0
     winflag = 1
 
-start = 0
+start = 240
 #DYNAMIC SYSTEM PARAMETERS
 #-------------------------------------
 voutfact = 5.0
@@ -64,9 +64,9 @@ eta0 = 0.0
 tmax = 750.0
 tstart = 0.0
 
-nx = 128
-ny = 128
-nz = 128
+nx = 192
+ny = 192
+nz = 192
 
 ndiags = 750
 nmags = max(500, 500*tmax/250.0) #Number of magnetograms used.
@@ -160,6 +160,8 @@ variables[27] = init_number #Code to give the magnetograms and electric fields s
 
 variables[28] = omega   #Just for plotting and things. Not used in the Fortran
 
+np.savetxt('parameters/variables%03d.txt' % run, variables)   #variables numbered based on run number (up to 1000)
+
 #SOME FOLDER ADMIN
 #-------------------------------------
 
@@ -200,7 +202,6 @@ if os.path.isdir('./mf_mags/%03d/' % run) and start == 0:
             os.remove('./mf_mags/%03d/%04d.nc' % (run, i))
 elif not os.path.isdir('./mf_mags/%03d/' % run):
     os.mkdir('./mf_mags/%03d/' % run)
-
 
 #Create initial condition using new init.py (potential field with arbitrary lower boundary and domain dimensions)
 #-------------------------------------
@@ -245,12 +246,17 @@ init = compute_initial_condition(grid, bz, run, background_strength = 0.0, backg
 
 print('Calculating initial boundary conditions...')
 
-#compute_electrics(run, init_number, omega = omega, start = 0, end = 500)
+compute_electrics(run, init_number, omega = omega, start = 0, end = 1)
 
 hrefs = np.load('./hdata/h_ref.npy')
 ts    = np.load('./hdata/ts.npy')
 
 halls = []; omegas = []; tplots = []
+
+if start != 0:
+    halls = np.load('./hdata/halls.npy').tolist()
+    omegas = np.load('./hdata/omegas.npy').tolist()
+    tplots = np.load('./hdata/tplots.npy').tolist()
 
 if hflag < 0.5:
     os.system('make')
@@ -296,9 +302,9 @@ def find_minimum(xs, ys):
     else:
         return 1e6
 
-nmags_per_run = 25
+nmags_per_run = 1
 
-find_intercept = False
+find_intercept = True
 
 for mag_start in range(start, 500, nmags_per_run):
 
@@ -340,14 +346,8 @@ for mag_start in range(start, 500, nmags_per_run):
 
         #Want to add the option to use other measures here, so probably shouldn't call it helicity
 
-        if False:
-            check = compute_helicity(run, mag_end)
-            target = hrefs[mag_end]
-
-        else:
-            check = compare_fields(run, mag_end)
-            target = 0
-
+        check = compute_helicity(run, mag_end)
+        target = hrefs[mag_end]
 
         #THIS ASSUMES A ZERO INTERCEPT RATHER THAN MINIMISING ANYTHING
 
@@ -386,114 +386,6 @@ for mag_start in range(start, 500, nmags_per_run):
                         else:
                             print('TARGET',nr_target)
                             omega = nr_target
-        elif False:   #Find the minimum. This is a bit more intense and will always take a little while
-            fact = 1.1
-            #Estalishing when minimum is found is tricky.
-            if len(xs) == 1:  #Only one point -- make a guess
-                print('Increasing Omega')
-                omega = omega*fact
-            elif len(xs) == 2:  #Two points -- make a slightly more informed guess
-                if ys[-1] > ys[-2]:
-                    print('Further from minimum, trying the other way')
-                    omega = omega/(fact**2)
-                else:
-                    print('Correct drection, extending')
-
-                    omega = omega*fact
-
-            elif len(xs) > 2:  #Three points -- can make a pretty good guess!
-                print('Interpolating...')
-
-                min_target = find_minimum(xs[-3:], ys[-3:])
-
-                if min_target > 1e5:
-                    print('Mininum not nearby, increasing')
-                    omega = omega*fact
-                elif min_target < 0:
-                    print('Mininum too low, guessing')
-                    omega = omega/fact
-                else:
-                    print('Minimum found, using that')
-                    omega = min_target
-
-                print(xs, ys, min_target, omega)
-
-                dydx = abs(ys[-1] - ys[-2])/abs(xs[-1] - xs[-2])
-                print('dydx', dydx)
-                if dydx < 1e-5:
-                    go = False
-
-        else:
-            #Use some 'random' samples and narrow in on it from there.
-            #Let's be reasonably smart.
-
-            #1. Establish a range within which lies a minimum
-            #2. Narrow that down somehow and do a poly within it. Hmmm...
-
-            #Perhaps. Hard though.
-            #Could fit a poly to it and find the minimum of that? Would be smooth at least
-
-            xs.append(omega); ys.append(check - target)
-
-            fact = 5.0   #Max up and down to be tested on the polynomial
-            nsamples = 5
-
-
-            allsamples = np.geomspace(omega_init/fact, omega_init*fact, nsamples)
-
-            print(allsamples, omega_init)
-
-            if len(xs) < nsamples + 1:
-                omega = allsamples[len(xs) - 1]
-
-            print('POINTS CHECKED', xs[1:], ys[1:], omega, len(xs),len(xs)*((-1)**len(xs)) )
-
-            def func(x, a, b, c): #Parameters to be checked
-                lx = x#np.log(x)   #I think this is probably more reasonable
-                return a + b*lx + c*lx**2
-
-            if len(xs) > nsamples + 1:
-
-                #Check for minimum of curve
-                popt, pcov = curve_fit(func, xs[1:], ys[1:])
-
-                xs_all = np.linspace(allsamples[0], allsamples[-1], 100)
-                ys_all = func(xs_all, *popt)
-                plt.scatter(xs[1:], ys[1:])
-                plt.plot(xs_all, ys_all)
-                plt.show()
-                #See if there is a clear minimum. Somehow. There won't be to start with, unfortunately, so that's hard to test.
-                stopnext = True
-                omega = xs[ys.index(min(ys))]
-
-                #Check if minimum is within the range. If not, change omega init and repeat
-                min_ind = np.where(ys_all == np.min(ys_all))[0][0]
-                x_min = xs_all[min_ind]
-                if x_min > allsamples[0] + 1e-6 and x_min < allsamples[-1] - 1e-6:
-                    go = False
-                    omega_init = x_min
-                    omega = x_min
-                elif x_min <= allsamples[0] + 1e-6:
-                    print('Range too high, reducing to', allsamples[0])
-                    omega_init = allsamples[0]
-                    omega = allsamples[0]
-                    xs = []; ys = []
-                elif x_min >= allsamples[-1] - 1e-6:
-                    print('Range too low, increasing to', allsamples[-1])
-
-                    omega_init = allsamples[-1]
-                    omega = allsamples[-1]
-
-                    xs = []; ys = []
-                if omega_init < minomega:
-                    omega = minomega
-                    go = False
-                if omega_init > maxomega:
-                    omega = maxomega
-                    go = False
-
-
-                print('Omega init', omega_init)
 
     halls.append(check)
     omegas.append(omega)
@@ -504,6 +396,10 @@ for mag_start in range(start, 500, nmags_per_run):
     np.save('./hdata/halls.npy', halls)
     np.save('./hdata/omegas.npy', omegas)
     np.save('./hdata/tplots.npy', tplots)
+
+    #Remove files because too big
+    if os.path.exists('extra/tmp/trcn27/mf3d/%03d/%04d.nc' % (run, mag_start-10)):
+        os.system('rm -r extra/tmp/trcn27/mf3d/%03d/%04d.nc'% (run, mag_start-10))
 
 #Finish off by running the remaining
 
